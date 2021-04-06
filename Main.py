@@ -12,6 +12,8 @@ def xor(a, b):
 
 
 mem = [[334,'I','I','M','I'],[5,'I','I','I','I'],[3,'I','I','M','I'],[2,'I','I','I','I']]
+for x in range(1,5):
+    print(x)
 
 # def getmem():
 #     return mem[3]

@@ -49,14 +49,34 @@ class L1Cache:
         self.directory = directory
 
     def write(self,data,address):
-        pass
-        # self.checkAddress(address)
+        if not(self.checkAddress(address)): #writemiss
+            return self.removeAddress(address,False) #read = false
+        else:
+            #mutex start
+            stat,_ = self.directory.getCacheBlock(self.memNum,address)
+            stat = stat[self.memNum]
+            pos = xor(isOdd(address),0x1)
+            if(stat == 'M'): #its already in memmory and has actual value
+                pass #no need to do anything
+            if(stat == 'S'):
+                self.mem1[pos] = self.directory.S2M(self.memNum,address)
+            elif(stat == 'I'): #Current value is in memory but invalid
+                self.mem1[pos] = self.directory.I2M(self.memNum,address)
+            else: #the address is in some other state, an error
+                self.errorprint()
+            #mutex end
+            self.writel1(data,address)
+            return self.mem1[pos][0]
+    
+    def writel1(self,data,address):
+        if(isOdd(address)==1):
+            self.mem1[0] = [address,data]
+        else:
+            self.mem1[1] = [address,data]
 
     def read(self,address):
         if not(self.checkAddress(address)): #readmiss
-            self.removeAddress(address)
-            #mutex start
-            #mutex end
+            return self.removeAddress(address,True)
         else:
             #mutex start
             stat,_ = self.directory.getCacheBlock(self.memNum,address)
@@ -68,7 +88,6 @@ class L1Cache:
                 self.mem1[pos] = self.directory.I2S(self.memNum,address)
             else: #the address is in some other state, an error
                 self.errorprint()
-                return [0,0]
             #mutex end
             return self.mem1[pos][0]
     
@@ -81,10 +100,10 @@ class L1Cache:
             return self.mem1[0][0] == address
         return  self.mem1[1][0] == address
 
-    def removeAddress(self,address):#address is the new address thats desired
+    def removeAddress(self,address,read):#address is the new address thats desired
         oldAddress = self.getBlock(address)[0]# works because it is 1 way
-        #mutex start
-        stat,_ = self.directory.getCacheBlock(self.memNum,oldAddress)
+        
+        stat,_ = self.directory.getCacheBlock(oldAddress)
         stat = stat[self.memNum]
         if('M' in stat):#if the block is in M it must be written to memory
             self.directory.M2I(self.memNum,oldAddress)#write the old block to memory and set is as I
@@ -94,10 +113,14 @@ class L1Cache:
             pass
         else:
             self.errorprint()
-        block = self.directory.I2S(self.memNum,address)#get the memory block
-        #mutex end
+        if(read):
+            block = self.directory.I2S(self.memNum,address)#get the memory block
+        else:
+            block = self.directory.I2M(self.memNum,address)#get the memory block
+        
         pos = xor(isOdd(address),0x1)
         self.mem1[pos] = block #put new address into memory
+        return self.mem1[pos]
     
     def getBlock(self,address): #returns block of mem specified by address
         if(isOdd(address)==1):
@@ -111,14 +134,15 @@ class Directory:
         self.directory = [[0,'I','I','I','I'],[0,'I','I','I','I'],[0,'I','I','I','I'],[0,'I','I','I','I']] #Data and status, first two are for odds,MSI
         self.l2cache = l2cache
 
-    def getCacheBlock(self,cacheNum,address): #CHECK IF IT RETURNS SHALLOW OR DEEP COPY, MUST BE SHALLOW COPY
+    def getCacheBlock(self,address): #CHECK IF IT RETURNS SHALLOW OR DEEP COPY, MUST BE SHALLOW COPY
         for i in range(4):
             if(address == self.directory[i][0]):
                 return self.directory[i],i
-        return 'N'
+        return 'N' #make it so that if this happens get the block from memory
+        #need to make replacement function in l2
 
     def M2S(self,cacheNum,address): #M --> S, returns a whole block of memory
-        cBlock,i = self.getCacheBlock(cacheNum,address)
+        cBlock,i = self.getCacheBlock(address)
         if cBlock == 'N':
             return self.notFound(address) #in case it is not in directory
         block = self.l2cache.getBlockl1(cacheNum,i,address)#put the block in l2, returns the block memory
@@ -126,28 +150,32 @@ class Directory:
         self.updatecache() #print current cache, DEBUG
         return block
 
-    def M2I(self,cacheNum,address):#M --> I, returns a whole block of memory
-        cBlock,i = self.getCacheBlock(cacheNum,address)
+    def M2I(self,cacheNum,address):#M --> I
+        cBlock,i = self.getCacheBlock(address)
         if cBlock == 'N':
             return self.notFound(address) #in case it is not in directory
-        block = self.l2cache.getBlockl1(cacheNum,i,address)#put the block in l2, returns the block memory
+        self.l2cache.getBlockl1(cacheNum,i,address)#put the block in l2, returns the block memory, needs to be done to update mainmem
         self.directory[i][cacheNum] = 'I'
         self.updatecache() #print current cache, DEBUG
-        return block
 
-    # def S2M(self,cache,address):#M --> S, returns a whole block of memory
+    def S2M(self,cacheNum,address):#M --> S
+        cBlock,i = self.getCacheBlock(address)
+        if cBlock == 'N':
+            self.notFound(address) #in case it is not in directory
+        for x in range(1,5):
+            self.directory[i][x] = 'I'
+        self.directory[i][cacheNum] = 'M'
+        self.updatecache() #print current cache, DEBUG
 
-    def S2I(self,cacheNum,address):#S --> I, returns a whole block of memory
-        cBlock,i = self.getCacheBlock(cacheNum,address)
+    def S2I(self,cacheNum,address):#S --> I
+        cBlock,i = self.getCacheBlock(address)
         if cBlock == 'N':
             return self.notFound(address) #in case it is not in directory
-        block = self.l2cache.getBlockl1(cacheNum,i,address)#put the block in l2, returns the block memory
         self.directory[i][cacheNum] = 'I'
         self.updatecache() #print current cache, DEBUG
-        return block
 
     def I2S(self,cacheNum,address):#I --> S, returns a whole block of memory
-        cBlock,i = self.getCacheBlock(cacheNum,address)
+        cBlock,i = self.getCacheBlock(address)
         if cBlock == 'N':
             return self.notFound(address) #in case it is not in directory
         elif ('M' in cBlock):#theres an M
@@ -161,7 +189,8 @@ class Directory:
         return block
 
 
-    # def I2M(self,cache,address):
+    def I2M(self,cacheNum,address):#I --> M
+        self.S2M(cacheNum,address)
 
     def notFound(self,address):
         print("didnt find address"+str(address))
