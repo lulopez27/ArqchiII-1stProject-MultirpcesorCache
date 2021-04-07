@@ -1,6 +1,9 @@
 import numpy as np
 from Main import isOdd,xor
+from threading import Thread, Lock
+
 run = True
+mutex = Lock()
 
 class Core:
     def __init__(self,l1cache,l2cache,procNumb,control,directory): #create the core and hook it up
@@ -8,7 +11,7 @@ class Core:
         self.curr=0
         self.cpu = CPU()
         self.l1cache = l1cache
-        self.l2cache = l2cache
+        self.controller = controller
         self.procNumb = procNumb
         self.control = control
         self.directory = directory
@@ -41,199 +44,132 @@ class CPU:
         return np.random.randint(0,65536)
 
 class L1Cache:
-    def __init__(self,memNum,directory): #,l2cache
+    def __init__(self,memNum,l2cache): #,l2cache
         self.mem1={}
-        self.mem1=[[0,0],[0,0]]
-        # self.l2cache = l2cache
+        self.mem1=[[0,'I',0,0],[1,'I',0,0]] 
+                  #0blocknum, 1state, 2address, 3value
         self.memNum = memNum+1
-        self.directory = directory
+        self.l2cache = l2cache
 
     def write(self,data,address):
-        if not(self.checkAddress(address)): #writemiss
-            return self.removeAddress(address,False) #read = false
-        else:
-            #mutex start
-            stat,_ = self.directory.getCacheBlock(self.memNum,address)
-            stat = stat[self.memNum]
-            pos = xor(isOdd(address),0x1)
-            if(stat == 'M'): #its already in memmory and has actual value
-                pass #no need to do anything
-            if(stat == 'S'):
-                self.mem1[pos] = self.directory.S2M(self.memNum,address)
-            elif(stat == 'I'): #Current value is in memory but invalid
-                self.mem1[pos] = self.directory.I2M(self.memNum,address)
-            else: #the address is in some other state, an error
-                self.errorprint()
-            #mutex end
-            self.writel1(data,address)
-            return self.mem1[pos][0]
-    
-    def writel1(self,data,address):
-        if(isOdd(address)==1):
-            self.mem1[0] = [address,data]
-        else:
-            self.mem1[1] = [address,data]
+        if not(self.checkAddress(address)): #it isnt in memory
+            self.removeAddress(address) #writemiss
+        else:# its in memory
+            block = self.getBlock(address)
+            block[3] = data
+            if (block[1] == 'M'): # its in L1
+                pass
+            elif (block[1] == 'S'):# its in L1
+                self.l2cache.writeMiss(self.memNum,address)
+            elif (block[1] == 'I'):# readMiss
+                self.l2cache.writeMiss(self.memNum,address)
 
     def read(self,address):
-        if not(self.checkAddress(address)): #readmiss
-            return self.removeAddress(address,True)
-        else:
-            #mutex start
-            stat,_ = self.directory.getCacheBlock(self.memNum,address)
-            stat = stat[self.memNum]
-            pos = xor(isOdd(address),0x1)
-            if(stat == 'M' or stat == 'S'): #its already in memory and has actual value
-                pass #no need to do anything
-            elif(stat == 'I'): #Current value is in memory but invalid
-                self.mem1[pos] = self.directory.I2S(self.memNum,address)
-            else: #the address is in some other state, an error
-                self.errorprint()
-            #mutex end
-            return self.mem1[pos][0]
-    
+        if not(self.checkAddress(address)): #it isnt in memory
+            self.removeAddress(address)#readmiss
+        else:# its in memory
+            block = self.getBlock(address)
+            if (block[1] == 'M'): # its in L1
+                return
+            elif (block[1] == 'S'):# its in L1
+                return
+            elif (block[1] == 'I'):# readMiss
+                block[3] = self.l2cache.readMiss(self.memNum,address)
+                block[1] = 'S'
+
     def errorprint(self):
         print("ERRORR in cache")
-
 
     def checkAddress(self,address):
         if(isOdd(address)==1):
             return self.mem1[0][0] == address
         return  self.mem1[1][0] == address
 
-    def removeAddress(self,address,read):#address is the new address thats desired
-        oldAddress = self.getBlock(address)[0]# works because it is 1 way
-        
-        stat,_ = self.directory.getCacheBlock(oldAddress)
-        stat = stat[self.memNum]
+    def removeAddress(self,address):#address is the new address thats desired
+        oldBlock = self.getBlock(address)# works because it is 1 way
+        stat = oldBlock[1]
+        oldAddress = oldBlock[2]
+
         if('M' in stat):#if the block is in M it must be written to memory
-            self.directory.M2I(self.memNum,oldAddress)#write the old block to memory and set is as I
+            self.l2cache.M2I(self.memNum,oldAddress,oldBlock[3])#write the old block to memory and set is as I
         elif('S' in stat):#switch it to I in directory
-            self.directory.S2I(self.memNum,oldAddress)#write the old block to memory and set is as I
-        elif ('I' in stat):
+            self.l2cache.S2I(self.memNum,oldAddress)#write the old block to memory and set is as I
+        elif ('I' in stat):# doesnt matter
             pass
         else:
             self.errorprint()
-        if(read):
-            block = self.directory.I2S(self.memNum,address)#get the memory block
-        else:
-            block = self.directory.I2M(self.memNum,address)#get the memory block
         
-        pos = xor(isOdd(address),0x1)
-        self.mem1[pos] = block #put new address into memory
-        return self.mem1[pos]
+        return xor(isOdd(address),0x1)
     
     def getBlock(self,address): #returns block of mem specified by address
         if(isOdd(address)==1):
             return self.mem1[0]
         return self.mem1[1]
 
+    def M2S(self,address):
+        block = self.getBlock(address)
+        block[1] = 'S'
     
-class Directory:
-    def __init__(self,l2cache):
-        self.directory = {}
-        self.directory = [[0,'I','I','I','I'],[0,'I','I','I','I'],[0,'I','I','I','I'],[0,'I','I','I','I']] #Data and status, first two are for odds,MSI
-        self.l2cache = l2cache
-
-    def getCacheBlock(self,address): #CHECK IF IT RETURNS SHALLOW OR DEEP COPY, MUST BE SHALLOW COPY
-        for i in range(4):
-            if(address == self.directory[i][0]):
-                return self.directory[i],i
-        return 'N' #make it so that if this happens get the block from memory
-        #need to make replacement function in l2
-
-    def M2S(self,cacheNum,address): #M --> S, returns a whole block of memory
-        cBlock,i = self.getCacheBlock(address)
-        if cBlock == 'N':
-            return self.notFound(address) #in case it is not in directory
-        block = self.l2cache.getBlockl1(cacheNum,i,address)#put the block in l2, returns the block memory
-        self.directory[i][cacheNum] = 'S'
-        self.updatecache() #print current cache, DEBUG
-        return block
-
-    def M2I(self,cacheNum,address):#M --> I
-        cBlock,i = self.getCacheBlock(address)
-        if cBlock == 'N':
-            return self.notFound(address) #in case it is not in directory
-        self.l2cache.getBlockl1(cacheNum,i,address)#put the block in l2, returns the block memory, needs to be done to update mainmem
-        self.directory[i][cacheNum] = 'I'
-        self.updatecache() #print current cache, DEBUG
-
-    def S2M(self,cacheNum,address):#M --> S
-        cBlock,i = self.getCacheBlock(address)
-        if cBlock == 'N':
-            self.notFound(address) #in case it is not in directory
-        for x in range(1,5):
-            self.directory[i][x] = 'I'
-        self.directory[i][cacheNum] = 'M'
-        self.updatecache() #print current cache, DEBUG
-
-    def S2I(self,cacheNum,address):#S --> I
-        cBlock,i = self.getCacheBlock(address)
-        if cBlock == 'N':
-            return self.notFound(address) #in case it is not in directory
-        self.directory[i][cacheNum] = 'I'
-        self.updatecache() #print current cache, DEBUG
-
-    def I2S(self,cacheNum,address):#I --> S, returns a whole block of memory
-        cBlock,i = self.getCacheBlock(address)
-        if cBlock == 'N':
-            return self.notFound(address) #in case it is not in directory
-        elif ('M' in cBlock):#theres an M
-            for j in range(1,5):
-                if(self.directory[i][j] == 'M'): #check if there's an M, if so get mem and change it to S
-                    block = self.M2S(j,address)
-        else: #S or I, either way l2 is uptodate
-            block = self.l2cache.getBlockl2(i)#get the block from l2
-        self.directory[i][cacheNum] = 'S'
-        self.updatecache() #print current cache, DEBUG
-        return block
-
-
-    def I2M(self,cacheNum,address):#I --> M
-        self.S2M(cacheNum,address)
-
-    def notFound(self,address):
-        print("didnt find address"+str(address))
-    
-    def updatecache(self):
-        print(self.directory)
-
-    # def contains(self,address):#check wether a position is already on L2, return bool
-    #     if(isOdd(address)==1):
-    #         return self.directory[0][0] == address or self.directory[1][0] == address 
-    #     return self.directory[2][0] == address or self.directory[3][0] == address
-
-    # def putAddrL2(self,address): #Put a new block in L2 from memory
-    #     offset = np.random.randint(0,2)
-    #     if(isOdd(address)==1):
-    #         self.checkWT(offset,address) #Checks to write content to memory if needed
-    #         self.changeL2Val(offset,address) #changes the value in L2
-    #     offset +=2
-    #     self.checkWT(offset,address) #Checks to write content to memory if needed
-    #     self.changeL2Val(offset,address)
-    
-    # def changeL2Val(self,offset,address): #change the value of a block 
-    #     self.l2cache.getAddrMainMem(offset,address)
-    #     self.directory[offset][0] = address
-    #     self.directory[offset][1] = self.directory[offset][2] = self.directory[offset][3] = self.directory[offset][4] = 'I'
-    
-    # def checkWT(self,offset,address):
-    #     if('M' in self.directory):
-    #         pos = self.directory.index('M')
-    #         self.l1caches[pos]
-    #     pass
 
 class L2Cache:
-    def __init__(self,mainmem,caches):
+    def __init__(self,mainMem,caches,directory):
         self.mem2={}
-        self.mem2=[[0,0],[0,0],[0,0],[0,0]]
+        self.mem2=[[0,'DI',0,[0],0,0,0],[1,'DI',0,[0],0,0,0],[2,'DI',0,[0],0,0,0],[3,'DI',0,[0],0,0,0]]
+                  #0blockNum, 1State, 2owner, 3sharers, 4address, 5value, 6semaphore
+        self.new=[0,1,2,3,4,5,6,7]
         self.caches = caches
-        self.mainmem=mainmem
+        self.directory = directory
+        self.mainMem=mainMem
     
+    def readMiss(self,cacheNum,address): #a readmiss is called from cacheNum with address
+        block = self.getblock(address)
+        while(block[6] == 1):#busy waiting
+            pass
+        mutex.acquire()
+        block[6] = 1
+        mutex.release()
+        if (block[1] == 'DM'):
+            block[1] = 'DS'
+            owner = block[2]
+            self.caches[owner-1].M2S(address) #change owner status to 'S'
+            block[5] = self.caches[owner-1].getBlock(address)[3] #get the value that the owner has and se it as current l2 value
+            self.mainMem.setVal(address,block[5])
+        elif (block[1] == 'DI'):
+            block[1] = 'DS'
+        block[3].append(cacheNum)
+        block[6] = 0
+        return block[5]
+
+    # def writeMiss(self,address):
+    #     block = self.getblock(address)
+    #     while(block[6] == 1):
+    #     pass
+    #     block[3].append(cacheNum)
+
+    def getblock(self,address):
+        for i in range(4):
+            if(self.mem2[i][3] == address):
+                return self.mem2[i]
+        self.genPos(address)
+        self.mainMem.getblock(address)
+
     #Interactions with Main Memory
-    def getAddrMainMem(self,pos,address): #get block from main memory
+    def getAddrMainMem(self,address,save): #get block from main memory
+        pos = self.genPos(address)
+        if(address in self.new): #remove it from new
+            pass
+        else:
+            self.mainMem.save()
         self.mem2[pos][0] = address
-        self.mem2[pos][1] = self.mainmem.getVal(address)
+        self.mem2[pos][1] = self.mainMem.getVal(address)
+
+    def genPos(self,address):
+        if(isOdd(address)==1):
+            pos = 0
+        else:
+            pos = 2
+        pos =+ np.random.randint(0,2)
+        return pos
 
     #Interactions with L1cache
     def getBlockl1(self,cache,memline,addr):#remmember the cache is the number starting at 1
@@ -259,11 +195,5 @@ class MainMem:
     def setVal(self,addr,val):
         self.mem[addr][1] = val
 
-class Control:
-    def __init__(self,directory):
-        self.directory = directory
-    
-    def checkAddress(self,address): #check if an address is in directory, if it isnt add it to l2
-        if(self.directory.contains(address)):
-            return
-        self.directory.putAddrL2(address)
+    def getblock(self,address):
+        return self.mem[address]
