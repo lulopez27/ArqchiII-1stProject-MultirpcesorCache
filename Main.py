@@ -1,30 +1,19 @@
-import numpy as np
-import matplotlib.pyplot as plt
-
+from Hardware import Core,L1Cache,L2Cache,MainMem
 pause = 0
 
 
-def isOdd(num):
-    return num & 0x1
-
-def xor(a, b):
-    return (a and not b) or (not a and b)
 
 
-mem = [[334,'I','I','M','I'],[5,'I','I','I','I'],[3,'I','I','M','I'],[2,'I','I','I','I']]
-for x in range(5):
-     print(x)
-
-# def getmem():
-#     return mem[3]
-
-# print(mem[3])
-# a = getmem()
-# a[2] = 'P'
-# print(mem[3])
-
-# l2cache = L2Cache()
-# directory = Directory()
+mainMem = MainMem 
+l2 = L2Cache(mainMem)
+cores = []
+for i in range(4):
+    print(i)
+    cache = L1Cache(i,l2)
+    cores.append(Core(cache,i))
+    l2.addCache(cache)
+print('Caches: ')
+l2.printCaches()
 # cores = []
 # for x in range(4): #Create the cores they're 4
 #     cores.append(Core(l2cache,directory,x))

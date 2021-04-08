@@ -1,20 +1,23 @@
 import numpy as np
-from Main import isOdd,xor
 from threading import Thread, Lock
+
+
+def isOdd(num):
+    return num & 0x1
+
+def xor(a, b):
+    return (a and not b) or (not a and b)
 
 run = True
 mutex = Lock()
 
 class Core:
-    def __init__(self,l1cache,l2cache,procNumb,control,directory): #create the core and hook it up
+    def __init__(self,l1cache,procNumb): #create the core and hook it up
         self.prob = np.random.poisson(1, 1000)
         self.curr=0
         self.cpu = CPU()
         self.l1cache = l1cache
-        self.controller = controller
         self.procNumb = procNumb
-        self.control = control
-        self.directory = directory
 
 
     def coreThread(self):
@@ -57,11 +60,11 @@ class L1Cache:
         else:# its in memory
             block = self.getBlock(address)
             block[3] = data
-            if (block[1] == 'M'): # its in L1
+            if (block[1] == 'M'): # its in L1, and most current
                 pass
-            elif (block[1] == 'S'):# its in L1
+            elif (block[1] == 'S'):# its in L1, but not most current
                 self.l2cache.writeMiss(self.memNum,address)
-            elif (block[1] == 'I'):# readMiss
+            elif (block[1] == 'I'):#invalid
                 self.l2cache.writeMiss(self.memNum,address)
 
     def read(self,address):
@@ -98,8 +101,6 @@ class L1Cache:
             pass
         else:
             self.errorprint()
-        
-        return xor(isOdd(address),0x1)
     
     def getBlock(self,address): #returns block of mem specified by address
         if(isOdd(address)==1):
@@ -109,23 +110,39 @@ class L1Cache:
     def M2S(self,address):
         block = self.getBlock(address)
         block[1] = 'S'
+
+    def M2I(self,address):
+        block = self.getBlock(address)
+        block[1] = 'I'
+
+    def S2I(self,address):
+        block = self.getBlock(address)
+        block[1] = 'I'
     
 
 class L2Cache:
-    def __init__(self,mainMem,caches,directory):
+    def __init__(self,mainMem):
         self.mem2={}
-        self.mem2=[[0,'DI',0,[0],0,0,0],[1,'DI',0,[0],0,0,0],[2,'DI',0,[0],0,0,0],[3,'DI',0,[0],0,0,0]]
+        self.mem2=[[0,'DI',0,[],0,0,0],[1,'DI',0,[],0,0,0],[2,'DI',0,[],0,0,0],[3,'DI',0,[],0,0,0]]
                   #0blockNum, 1State, 2owner, 3sharers, 4address, 5value, 6semaphore
-        self.new=[0,1,2,3,4,5,6,7]
-        self.caches = caches
-        self.directory = directory
+        self.caches = []
         self.mainMem=mainMem
     
+    def addCache(self,cache):
+        self.caches.append(cache)
+
+    def printCaches(self):
+        for i in self.caches:
+            print(i.memNum)
+        print("Done")
+
     def readMiss(self,cacheNum,address): #a readmiss is called from cacheNum with address
         block = self.getblock(address)
         while(block[6] == 1):#busy waiting
             pass
         mutex.acquire()
+        if(block[4] != address):
+            block = self.getblock(address)
         block[6] = 1
         mutex.release()
         if (block[1] == 'DM'):
@@ -140,28 +157,50 @@ class L2Cache:
         block[6] = 0
         return block[5]
 
-    # def writeMiss(self,address):
-    #     block = self.getblock(address)
-    #     while(block[6] == 1):
-    #     pass
-    #     block[3].append(cacheNum)
+    def writeMiss(self,cacheNum,address):
+        block = self.getblock(address)
+        while(block[6] == 1):
+            pass
+        if(block[4] != address):
+            return self.getblock(address)
+        mutex.acquire()
+        if(block[4] != address):
+            block = self.getblock(address)
+        block[6] = 1
+        mutex.release()
+        if (block[1] == 'DM'):
+            owner = block[2]
+            self.caches[owner-1].M2I(address) #change owner status to 'I'
+        elif (block[1] == 'DS'):
+            for i in block[3]:
+                self.caches[i-1].S2I(address) #change all 'S' status to 'I'
+        block[1]  = 'DM' #put it as DM
+        block[2] = cacheNum #set the current cache as owner
+
 
     def getblock(self,address):
         for i in range(4):
             if(self.mem2[i][3] == address):
                 return self.mem2[i]
-        self.genPos(address)
-        self.mainMem.getblock(address)
-
-    #Interactions with Main Memory
-    def getAddrMainMem(self,address,save): #get block from main memory
-        pos = self.genPos(address)
-        if(address in self.new): #remove it from new
+        pos = self.genPos(address) #generate random position based on address
+        block = self.mem2[pos] #the block to be replaced 
+        while(block[6] == 1):#busy waiting
             pass
-        else:
-            self.mainMem.save()
-        self.mem2[pos][0] = address
-        self.mem2[pos][1] = self.mainMem.getVal(address)
+        mutex.acquire()
+        if(block[4] != address):
+            block = self.getblock(address)
+        block[6] = 1
+        mutex.release()
+        if(block[1] == 'DM'):
+            self.mainMem.setVal(address,block[5])
+        #default values
+        block[1] = 'DI'
+        block[2] = 0
+        block[3] = []
+        block[4] = address
+        block[5] = self.mainMem.getVal(address) #value in the memory
+        block[6] = 0
+        return block
 
     def genPos(self,address):
         if(isOdd(address)==1):
@@ -171,19 +210,6 @@ class L2Cache:
         pos =+ np.random.randint(0,2)
         return pos
 
-    #Interactions with L1cache
-    def getBlockl1(self,cache,memline,addr):#remmember the cache is the number starting at 1
-        newVal = self.caches[cache-1].getBlock(addr) #returns block of mem specified by address 
-        self.mem2[memline] = newVal
-        return self.mem2[memline]
-
-
-    def rmBlock(self,addr):#addr corresponds to the new block that I want
-        pass
-
-
-    def getBlockl2(self,pos): #get the block of a position
-        return self.mem2[pos]
 
 class MainMem:  
     def __init__(self):
@@ -194,6 +220,3 @@ class MainMem:
 
     def setVal(self,addr,val):
         self.mem[addr][1] = val
-
-    def getblock(self,address):
-        return self.mem[address]
