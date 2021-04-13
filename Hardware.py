@@ -1,5 +1,6 @@
 import numpy as np
 from threading import Thread, Lock
+from gui import updateWindow
 
 
 def isOdd(num):
@@ -34,7 +35,12 @@ class Core:
         elif(self.prob[self.curr] == 0): #0 is for read
             addr = self.cpu.genAddress() #get a random address from mem
             print("Read: "+str(addr) +" ---------------------- cache : "+str(self.procNumb))
-            self.l1cache.read(addr)
+            block = self.l1cache.read(addr)
+            print(str(block))
+            if(isOdd(addr)==1):
+                updateWindow(str(block),'C'+str(self.procNumb)+'V0')
+            else:
+                updateWindow(str(block),'C'+str(self.procNumb)+'V1')
         else: #anything else will be a write
             addr = self.cpu.genAddress() #get an address from mem
             val  = self.cpu.genValue()   #get a random value to be writen at address
@@ -84,6 +90,7 @@ class L1Cache:
         elif (block[1] == 'I'):# readMiss
             block[3] = self.l2cache.readMiss(self.memNum,address)
             block[1] = 'S'
+        return block
 
     def errorprint(self):
         print("ERRORR in cache")

@@ -1,5 +1,10 @@
+import threading
 from Hardware import Core,L1Cache,L2Cache,MainMem
+from gui import *
 
+
+x = threading.Thread(target=run, args=())
+x.start()
 mainMem = MainMem()
 l2 = L2Cache(mainMem)
 cores = []
@@ -11,9 +16,9 @@ l2.printCaches()
 
 cores[0].coreThread()
 
-def createCaches(cores,l2):
-    for i in range(4):
-        print(i)
-        cache = L1Cache(i,l2)
-        cores.append(Core(cache,i))
-        l2.addCache(cache)
+# def createCaches(cores,l2):
+#     for i in range(4):
+#         print(i)
+#         cache = L1Cache(i,l2)
+#         cores.append(Core(cache,i))
+#         l2.addCache(cache)
