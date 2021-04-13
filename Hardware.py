@@ -9,6 +9,7 @@ def xor(a, b):
     return (a and not b) or (not a and b)
 
 run = True
+stop = False
 mutex = Lock()
 
 class Core:
@@ -17,25 +18,28 @@ class Core:
         self.curr=0
         self.cpu = CPU()
         self.l1cache = l1cache
-        self.procNumb = procNumb
+        self.procNumb = procNumb+1
 
 
     def coreThread(self):
         while(run):
-            self.nextInst()
+            if stop:
+                pass
+            else:
+                self.nextInst()
 
     def nextInst(self):
-        print("Curr = "+str(self.curr)+" Inst = "+str(self.prob[self.curr]))
-
         if (self.prob[self.curr] == 1): #1 is for calc
             self.cpu.calc()
         elif(self.prob[self.curr] == 0): #0 is for read
             addr = self.cpu.genAddress() #get a random address from mem
+            print("Read: "+str(addr) +" ---------------------- cache : "+str(self.procNumb))
             self.l1cache.read(addr)
         else: #anything else will be a write
             addr = self.cpu.genAddress() #get an address from mem
             val  = self.cpu.genValue()   #get a random value to be writen at address
-            self.l1cache.write(val,addr) #
+            print("Write: "+str(addr)+" = "+str(val) +" ------- cache : "+str(self.procNumb))
+            self.l1cache.write(val,addr) 
         self.curr+=1
 
 class CPU:
@@ -57,36 +61,37 @@ class L1Cache:
     def write(self,data,address):
         if not(self.checkAddress(address)): #it isnt in memory
             self.removeAddress(address) #writemiss
-        else:# its in memory
-            block = self.getBlock(address)
-            block[3] = data
-            if (block[1] == 'M'): # its in L1, and most current
-                pass
-            elif (block[1] == 'S'):# its in L1, but not most current
-                self.l2cache.writeMiss(self.memNum,address)
-            elif (block[1] == 'I'):#invalid
-                self.l2cache.writeMiss(self.memNum,address)
+        # its in memory
+        block = self.getBlock(address)
+        block[3] = data
+        if (block[1] == 'M'): # its in L1, and most current
+            pass
+        elif (block[1] == 'S'):# its in L1, but not most current
+            self.l2cache.writeMiss(self.memNum,address)
+        elif (block[1] == 'I'):#invalid
+            self.l2cache.writeMiss(self.memNum,address)
+        block[1] = 'M'
 
     def read(self,address):
         if not(self.checkAddress(address)): #it isnt in memory
             self.removeAddress(address)#readmiss
-        else:# its in memory
-            block = self.getBlock(address)
-            if (block[1] == 'M'): # its in L1
-                return
-            elif (block[1] == 'S'):# its in L1
-                return
-            elif (block[1] == 'I'):# readMiss
-                block[3] = self.l2cache.readMiss(self.memNum,address)
-                block[1] = 'S'
+        # its in memory
+        block = self.getBlock(address)
+        if (block[1] == 'M'): # its in L1
+            return
+        elif (block[1] == 'S'):# its in L1
+            return
+        elif (block[1] == 'I'):# readMiss
+            block[3] = self.l2cache.readMiss(self.memNum,address)
+            block[1] = 'S'
 
     def errorprint(self):
         print("ERRORR in cache")
 
     def checkAddress(self,address):
         if(isOdd(address)==1):
-            return self.mem1[0][0] == address
-        return  self.mem1[1][0] == address
+            return self.mem1[0][2] == address
+        return  self.mem1[1][2] == address
 
     def removeAddress(self,address):#address is the new address thats desired
         oldBlock = self.getBlock(address)# works because it is 1 way
@@ -99,8 +104,10 @@ class L1Cache:
             self.l2cache.S2I(self.memNum,oldAddress)#write the old block to memory and set is as I
         elif ('I' in stat):# doesnt matter
             pass
-        else:
-            self.errorprint()
+        #default cache values
+        oldBlock[1] = 'I'
+        oldBlock[2] = address
+
     
     def getBlock(self,address): #returns block of mem specified by address
         if(isOdd(address)==1):
@@ -138,18 +145,11 @@ class L2Cache:
 
     def readMiss(self,cacheNum,address): #a readmiss is called from cacheNum with address
         block = self.getblock(address)
-        while(block[6] == 1):#busy waiting
-            pass
-        mutex.acquire()
-        if(block[4] != address):
-            block = self.getblock(address)
-        block[6] = 1
-        mutex.release()
         if (block[1] == 'DM'):
             block[1] = 'DS'
             owner = block[2]
             self.caches[owner-1].M2S(address) #change owner status to 'S'
-            block[5] = self.caches[owner-1].getBlock(address)[3] #get the value that the owner has and se it as current l2 value
+            block[5] = self.caches[owner-1].getBlock(address)[3] #get the value that the owner has and set it as current l2 value
             self.mainMem.setVal(address,block[5])
         elif (block[1] == 'DI'):
             block[1] = 'DS'
@@ -159,15 +159,6 @@ class L2Cache:
 
     def writeMiss(self,cacheNum,address):
         block = self.getblock(address)
-        while(block[6] == 1):
-            pass
-        if(block[4] != address):
-            return self.getblock(address)
-        mutex.acquire()
-        if(block[4] != address):
-            block = self.getblock(address)
-        block[6] = 1
-        mutex.release()
         if (block[1] == 'DM'):
             owner = block[2]
             self.caches[owner-1].M2I(address) #change owner status to 'I'
@@ -176,40 +167,66 @@ class L2Cache:
                 self.caches[i-1].S2I(address) #change all 'S' status to 'I'
         block[1]  = 'DM' #put it as DM
         block[2] = cacheNum #set the current cache as owner
-
+        block[3] = [] #remove all sharers
+        block[6] = 0 #release the block
 
     def getblock(self,address):
+        block = 0
         for i in range(4):
-            if(self.mem2[i][3] == address):
-                return self.mem2[i]
-        pos = self.genPos(address) #generate random position based on address
-        block = self.mem2[pos] #the block to be replaced 
-        while(block[6] == 1):#busy waiting
-            pass
-        mutex.acquire()
-        if(block[4] != address):
-            block = self.getblock(address)
-        block[6] = 1
-        mutex.release()
-        if(block[1] == 'DM'):
-            self.mainMem.setVal(address,block[5])
+            if(self.mem2[i][4] == address):
+                block = self.mem2[i]
+                return self.accessBlock(block)
+        if (block == 0):
+            pos = self.genPos(address) #generate random position based on address
+            block = self.mem2[pos] #the block to be replaced 
+        block = self.accessBlock(block)
         #default values
+        if(block[1] == 'DM'):
+            self.mainMem.setVal(block[4],block[5])
+            block[1] = 'DI'
         block[1] = 'DI'
         block[2] = 0
         block[3] = []
         block[4] = address
         block[5] = self.mainMem.getVal(address) #value in the memory
-        block[6] = 0
         return block
-
+    
+    def accessBlock(self,block):
+        while(block[6] == 1):#busy waiting
+            pass
+        mutex.acquire()
+        block[6] = 1
+        mutex.release()
+        if(block[1] == 'DM'):
+            self.mainMem.setVal(block[4],block[5])
+            block[1] = 'DI'
+        return block
+        
     def genPos(self,address):
         if(isOdd(address)==1):
             pos = 0
         else:
             pos = 2
-        pos =+ np.random.randint(0,2)
+        pos += np.random.randint(0,2)
         return pos
 
+    def M2I(self,cacheNum,address,val):#invalidate a block in DM state
+        block = self.getblock(address)
+        block[1] = 'DI'
+        block[2] = 0
+        block[3] = []
+        block[5] = val #value it used to have
+        self.mainMem.setVal(address,val)
+        block[6] = 0
+
+    def S2I(self,cacheNum,address):
+        block = self.getblock(address)
+        if (len(block[3]) == 1): #if only one cache has it
+            block[1] = 'DI'
+            block[3] = []
+        else: #if more than one has it
+            block[3].remove(cacheNum)
+        block[6] = 0
 
 class MainMem:  
     def __init__(self):
