@@ -1,6 +1,7 @@
 import numpy as np
+import time
 from threading import Thread, Lock
-from gui import updateWindow
+from GUI import updateWindow
 
 
 def isOdd(num):
@@ -9,8 +10,12 @@ def isOdd(num):
 def xor(a, b):
     return (a and not b) or (not a and b)
 
+def updateGUI(block,key):
+    updateWindow(block,key)
+
 run = True
-stop = False
+stop = True
+semaphore = 4
 mutex = Lock()
 
 class Core:
@@ -23,30 +28,35 @@ class Core:
 
 
     def coreThread(self):
-        while(run):
-            if stop:
-                pass
-            else:
-                self.nextInst()
+        self.nextInst()
 
     def nextInst(self):
         if (self.prob[self.curr] == 1): #1 is for calc
             self.cpu.calc()
+            time.sleep(1)
+            print("Calc:  -------------------------- cache : "+str(self.procNumb)+"\n")
         elif(self.prob[self.curr] == 0): #0 is for read
             addr = self.cpu.genAddress() #get a random address from mem
-            print("Read: "+str(addr) +" ---------------------- cache : "+str(self.procNumb))
+            print("Read: "+str(addr) +" ---------------------- cache : "+str(self.procNumb)+"\n")
+            time.sleep(5)
             block = self.l1cache.read(addr)
-            print(str(block))
-            if(isOdd(addr)==1):
-                updateWindow(str(block),'C'+str(self.procNumb)+'V0')
-            else:
-                updateWindow(str(block),'C'+str(self.procNumb)+'V1')
+            self.updateGUICore(block)
         else: #anything else will be a write
             addr = self.cpu.genAddress() #get an address from mem
             val  = self.cpu.genValue()   #get a random value to be writen at address
-            print("Write: "+str(addr)+" = "+str(val) +" ------- cache : "+str(self.procNumb))
-            self.l1cache.write(val,addr) 
+            print("Write: "+str(addr)+" = "+str(val) +" ------- cache : "+str(self.procNumb)+"\n")
+            time.sleep(5)
+            block = self.l1cache.write(val,addr) 
+            self.updateGUICore(block)
         self.curr+=1
+        if (self.curr>999):
+            self.curr = 0
+    
+    def updateGUICore(self,block):
+        if(isOdd(block[2])==1):
+            updateGUI(str(block),'C'+str(self.procNumb)+'V0')
+        else:
+            updateGUI(str(block),'C'+str(self.procNumb)+'V1')
 
 class CPU:
     def calc(self):#must call waiting function
@@ -77,6 +87,7 @@ class L1Cache:
         elif (block[1] == 'I'):#invalid
             self.l2cache.writeMiss(self.memNum,address)
         block[1] = 'M'
+        return block
 
     def read(self,address):
         if not(self.checkAddress(address)): #it isnt in memory
@@ -84,9 +95,9 @@ class L1Cache:
         # its in memory
         block = self.getBlock(address)
         if (block[1] == 'M'): # its in L1
-            return
+            return block
         elif (block[1] == 'S'):# its in L1
-            return
+            return block
         elif (block[1] == 'I'):# readMiss
             block[3] = self.l2cache.readMiss(self.memNum,address)
             block[1] = 'S'
@@ -121,17 +132,22 @@ class L1Cache:
             return self.mem1[0]
         return self.mem1[1]
 
-    def M2S(self,address):
+    def M2S(self,address): #sets a block to S and returns the value
         block = self.getBlock(address)
         block[1] = 'S'
+        updateGUI(block, 'C'+str(self.memNum)+'V'+str(block[0]))
+        return block[3]
 
     def M2I(self,address):
         block = self.getBlock(address)
         block[1] = 'I'
+        updateGUI(block, 'C'+str(self.memNum)+'V'+str(block[0]))
+        return block[3]
 
     def S2I(self,address):
         block = self.getBlock(address)
         block[1] = 'I'
+        updateGUI(block, 'C'+str(self.memNum)+'V'+str(block[0]))
     
 
 class L2Cache:
@@ -145,52 +161,58 @@ class L2Cache:
     def addCache(self,cache):
         self.caches.append(cache)
 
-    def printCaches(self):
-        for i in self.caches:
-            print(i.memNum)
-        print("Done")
+    # def printCaches(self):
+    #     for i in self.caches:
+    #         print(i.memNum)
+    #     print("Done")
 
     def readMiss(self,cacheNum,address): #a readmiss is called from cacheNum with address
         block = self.getblock(address)
-        if (block[1] == 'DM'):
-            block[1] = 'DS'
-            owner = block[2]
-            self.caches[owner-1].M2S(address) #change owner status to 'S'
-            block[5] = self.caches[owner-1].getBlock(address)[3] #get the value that the owner has and set it as current l2 value
-            self.mainMem.setVal(address,block[5])
-        elif (block[1] == 'DI'):
+        # if (block[1] == 'DM'):
+        #     block[1] = 'DS'
+        #     owner = block[2]
+        #     block[5] = self.caches[owner-1].M2S(address) #change owner status to 'S'
+        #     #get the value that the owner has and set it as current l2 value
+            # self.mainMem.setVal(address,block[5])
+        if (block[1] == 'DI'):
             block[1] = 'DS'
         block[3].append(cacheNum)
+        updateGUI(block,'L2V'+str(block[0]))
         block[6] = 0
         return block[5]
 
     def writeMiss(self,cacheNum,address):
         block = self.getblock(address)
-        if (block[1] == 'DM'):
-            owner = block[2]
-            self.caches[owner-1].M2I(address) #change owner status to 'I'
-        elif (block[1] == 'DS'):
+        # if (block[1] == 'DM'):
+        #     owner = block[2]
+        #     self.caches[owner-1].M2I(address) #change owner status to 'I'
+        if (block[1] == 'DS'):
             for i in block[3]:
                 self.caches[i-1].S2I(address) #change all 'S' status to 'I'
         block[1]  = 'DM' #put it as DM
         block[2] = cacheNum #set the current cache as owner
         block[3] = [] #remove all sharers
+        updateGUI(block,'L2V'+str(block[0]))
         block[6] = 0 #release the block
 
     def getblock(self,address):
         block = 0
-        for i in range(4):
+        for i in range(4): 
             if(self.mem2[i][4] == address):
-                block = self.mem2[i]
-                return self.accessBlock(block)
+                if(address == 0 and i<2):
+                    block = 0
+                else:
+                    block = self.mem2[i]
+                    return self.accessBlock(block)
         if (block == 0):
             pos = self.genPos(address) #generate random position based on address
             block = self.mem2[pos] #the block to be replaced 
         block = self.accessBlock(block)
+        #replace block
+        # if(block[1] == 'DS'):
+        #     for i in block[3]:
+        #         self.caches[i-1].S2I(address) #change all 'S' status to 'I'
         #default values
-        if(block[1] == 'DM'):
-            self.mainMem.setVal(block[4],block[5])
-            block[1] = 'DI'
         block[1] = 'DI'
         block[2] = 0
         block[3] = []
@@ -204,9 +226,12 @@ class L2Cache:
         mutex.acquire()
         block[6] = 1
         mutex.release()
-        if(block[1] == 'DM'):
+        if(block[1] == 'DM'): 
+            owner = block[2]
+            block[5] = self.caches[owner-1].M2S(block[4]) #change owner status to 'S'
+            block[3].append(owner)
             self.mainMem.setVal(block[4],block[5])
-            block[1] = 'DI'
+            block[1] = 'DS'
         return block
         
     def genPos(self,address):
@@ -225,15 +250,20 @@ class L2Cache:
         block[5] = val #value it used to have
         self.mainMem.setVal(address,val)
         block[6] = 0
+        updateGUI(block,'L2V'+str(block[0]))
 
     def S2I(self,cacheNum,address):
         block = self.getblock(address)
         if (len(block[3]) == 1): #if only one cache has it
             block[1] = 'DI'
             block[3] = []
+        # elif(len(block[3]) == 0):
+        #     pass #CHECK
         else: #if more than one has it
             block[3].remove(cacheNum)
         block[6] = 0
+        updateGUI(block,'L2V'+str(block[0]))
+
 
 class MainMem:  
     def __init__(self):
@@ -244,3 +274,5 @@ class MainMem:
 
     def setVal(self,addr,val):
         self.mem[addr][1] = val
+        updateGUI(str(addr)+" - "+str(val),'MV'+str(addr))
+
