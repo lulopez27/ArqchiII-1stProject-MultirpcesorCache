@@ -11,6 +11,10 @@ dead = False
 inst =[]
 layout = [[sg.Text('Caches:', size=(30,1),pad=(550,0))],
 
+          [sg.Text('::::', size=(30,1),pad=(60,0),key='C1IA'),
+          sg.Text('::::', size=(30,1),pad=(10,0), key='C2IA'),
+          sg.Text('::::', size=(30,1),pad=(10,0), key='C3IA'),
+          sg.Text('::::', size=(30,1),pad=(10,0), key='C4IA')],
           [sg.Text('Core:1', size=(30,1),pad=(60,0),key='C1I'),
           sg.Text('Core:2', size=(30,1),pad=(10,0), key='C2I'),
           sg.Text('Core:3', size=(30,1),pad=(10,0), key='C3I'),

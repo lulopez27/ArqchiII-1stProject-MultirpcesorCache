@@ -25,6 +25,7 @@ class Core:
         self.cpu = CPU()
         self.l1cache = l1cache
         self.procNumb = procNumb+1
+        self.prevInst = '::::'
 
 
     def coreThread(self):
@@ -40,14 +41,18 @@ class Core:
 
     def nextInst(self):
         if (self.prob[self.curr] == 1): #1 is for calc
-            updateGUI('Cache:'+str(self.procNumb)+'-Calc','C'+str(self.procNumb)+'I')
+            updateGUI('Core:'+str(self.procNumb)+'-Calc','C'+str(self.procNumb)+'I')
+            updateGUI(self.prevInst,'C'+str(self.procNumb)+'IA')
+            self.prevInst = 'PrevInst: Core:'+str(self.procNumb)+'-Calc'
             self.cpu.calc()
             time.sleep(1)
             print("Calc:  -------------------------- cache : "+str(self.procNumb)+"\n")
         elif(self.prob[self.curr] == 0): #0 is for read
             addr = self.cpu.genAddress() #get a random address from mem
             print("Read: "+str(addr) +" ---------------------- cache : "+str(self.procNumb)+"\n")
-            updateGUI('Cache:'+str(self.procNumb)+'-Read: '+str(addr),'C'+str(self.procNumb)+'I')
+            updateGUI('Core:'+str(self.procNumb)+'-Read: '+str(addr),'C'+str(self.procNumb)+'I')
+            updateGUI(self.prevInst,'C'+str(self.procNumb)+'IA')
+            self.prevInst = 'PrevInst: Core:'+str(self.procNumb)+'-Read: '+str(addr)
             block = self.l1cache.read(addr)
             self.updateGUICore(block)
         else: #anything else will be a write
@@ -55,7 +60,8 @@ class Core:
             val  = self.cpu.genValue()   #get a random value to be writen at address
             print("Write: "+str(addr)+" = "+str(val) +" ------- cache : "+str(self.procNumb)+"\n")
             updateGUI('Core:'+str(self.procNumb)+'-Write : '+str(val)+' on '+str(addr),'C'+str(self.procNumb)+'I')
-            time.sleep(5)
+            updateGUI(self.prevInst,'C'+str(self.procNumb)+'IA')
+            self.prevInst = 'PrevInst: Core:'+str(self.procNumb)+'-Write : '+str(val)+' on '+str(addr)
             block = self.l1cache.write(val,addr) 
             self.updateGUICore(block)
         self.curr+=1
