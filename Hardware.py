@@ -32,10 +32,17 @@ class Core:
         self.nextInst()
 
     def setInstread(self,addr):
+        updateGUI('Core:'+str(self.procNumb)+'-Read: '+str(addr),'C'+str(self.procNumb)+'I')
+        updateGUI(self.prevInst,'C'+str(self.procNumb)+'IA')
+        self.prevInst = 'PrevInst: Core:'+str(self.procNumb)+'-Read: '+str(addr)
         block = self.l1cache.read(addr)
         self.updateGUICore(block)
 
     def setInstwrit(self,addr,val):
+        print("Write: "+str(addr)+" = "+str(val) +" ------- cache : "+str(self.procNumb)+"\n")
+        updateGUI('Core:'+str(self.procNumb)+'-Write : '+str(val)+' on '+str(addr),'C'+str(self.procNumb)+'I')
+        updateGUI(self.prevInst,'C'+str(self.procNumb)+'IA')
+        self.prevInst = 'PrevInst: Core:'+str(self.procNumb)+'-Write : '+str(val)+' on '+str(addr)
         block = self.l1cache.write(val,addr) 
         self.updateGUICore(block)
 
